@@ -1,0 +1,32 @@
+# ── 비밀값 / 로컬 설정 ─────────────────────────────────────
+# API 키·Notion 토큰·DB 비밀번호는 전부 .env에만 둔다. 예시는 .env.example 참고.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── 빌드 산출물 ────────────────────────────────────────────
+backend/build/
+backend/out/
+backend/.gradle/
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+ai-service/__pycache__/
+**/__pycache__/
+*.pyc
+
+# ── IDE / 도구 ─────────────────────────────────────────────
+.idea/
+.vscode/
+.claude/
+*.iml
+
+# ── OS ─────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── 로그 / 임시 ─────────────────────────────────────────────
+*.log
+*.tmp

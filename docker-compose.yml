@@ -1,0 +1,139 @@
+version: "3.9"
+
+services:
+
+  # ── PostgreSQL + pgvector ──────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: pkm-postgres
+    environment:
+      POSTGRES_DB: pkm
+      POSTGRES_USER: pkm
+      POSTGRES_PASSWORD: pkm1234
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pkm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ─────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: pkm-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Ollama (로컬 LLM) ──────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: pkm-ollama
+    profiles: ["docker-ollama"]
+    ports:
+      - "11434:11434"
+    environment:
+      OLLAMA_KEEP_ALIVE: 10m
+    volumes:
+      - ollama_data:/root/.ollama
+
+  # ── Ollama 모델 자동 설치 ──────────────────────────────────
+  ollama-setup:
+    image: ollama/ollama:latest
+    container_name: pkm-ollama-setup
+    profiles: ["docker-ollama"]
+    depends_on:
+      - ollama
+    entrypoint: >
+      sh -c "
+        sleep 5 &&
+        ollama pull llama3.2:3b &&
+        ollama pull nomic-embed-text &&
+        echo '✅ 모델 설치 완료'
+      "
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    volumes:
+      - ollama_data:/root/.ollama
+
+  # ── FastAPI AI Service ────────────────────────────────────
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: pkm-ai
+    ports:
+      - "8000:8000"
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      SUMMARY_MODEL: ${SUMMARY_MODEL:-qwen2.5:3b}
+      EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
+      DATABASE_URL: postgresql://pkm:pkm1234@postgres:5432/pkm
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./ai-service:/app
+    restart: unless-stopped
+
+  # ── Spring Boot API Gateway ───────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pkm-backend
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/pkm
+      SPRING_DATASOURCE_USERNAME: pkm
+      SPRING_DATASOURCE_PASSWORD: pkm1234
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
+      AI_SERVICE_URL: http://ai-service:8000
+      NOTION_API_KEY: ${NOTION_API_KEY}
+      NOTION_PARENT_PAGE_ID: ${NOTION_PARENT_PAGE_ID}
+      NOTION_RESOURCE_DB_ID: ${NOTION_RESOURCE_DB_ID}
+      CORE_API_KEY: ${CORE_API_KEY}
+      SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai-service:
+        condition: service_started
+    restart: unless-stopped
+
+  # ── Next.js Frontend ──────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pkm-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      INTERNAL_API_URL: http://backend:8080
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:

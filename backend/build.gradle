@@ -1,0 +1,43 @@
+plugins {
+    id 'org.springframework.boot' version '3.3.0'
+    id 'io.spring.dependency-management' version '1.1.5'
+    id 'java'
+}
+
+group = 'com.pkm'
+version = '0.0.1-SNAPSHOT'
+
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'  // SSE + WebClient
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    // PostgreSQL
+    runtimeOnly 'org.postgresql:postgresql'
+
+    // Lombok
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    // JSON
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+
+    // Lucene
+    implementation 'org.apache.lucene:lucene-core:9.10.0'
+    implementation 'org.apache.lucene:lucene-analysis-common:9.10.0'
+    implementation 'org.apache.lucene:lucene-queryparser:9.10.0'
+}

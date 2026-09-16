@@ -1,0 +1,31 @@
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/pkm}
+    username: ${SPRING_DATASOURCE_USERNAME:pkm}
+    password: ${SPRING_DATASOURCE_PASSWORD:pkm1234}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  data:
+    redis:
+      host: ${SPRING_REDIS_HOST:localhost}
+      port: ${SPRING_REDIS_PORT:6379}
+
+server:
+  port: 8080
+
+app:
+  ai-service-url: ${AI_SERVICE_URL:http://localhost:8000}
+  notion:
+    # 값은 .env → docker-compose environment 로만 주입한다. 여기에 기본값을 두면 커밋에 남는다.
+    api-key: ${NOTION_API_KEY:}
+    api-version: "2022-06-28"
+    base-url: "https://api.notion.com/v1"
+    parent-page-id: ${NOTION_PARENT_PAGE_ID:}
+    # 설정되면 논문 요약 페이지를 부모 페이지가 아니라 이 데이터베이스 안에 만든다
+    resource-db-id: ${NOTION_RESOURCE_DB_ID:}
