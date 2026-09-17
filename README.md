@@ -35,6 +35,38 @@
 
 검색 시점에는 키워드만 보고 의미(임베딩)는 저장한 뒤 논문끼리 잇는 데만 씁니다.
 
+
+### 검색된 논문 요약 및 번역 
+https://github.com/user-attachments/assets/d5c2fb6d-9579-4705-a995-982c54fb778b
+
+논문을 저장하면 유사도가 높은 관련 논문·메모를 자동으로 찾아 추천하고, 그 결과는 그래프에서 시각적으로 확인할 수 있다.
+
+
+
+<img width="1611" height="605" alt="image" src="https://github.com/user-attachments/assets/2d3bc621-62ff-4335-869d-c26e18150864" />
+
+
+<img width="1120" height="480" alt="pkm_prj_notionpage_1 2_480p (1)" src="https://github.com/user-attachments/assets/6776987b-f1b1-44b2-9c08-db4c8ca1c656" />
+
+노션에서 저장된 논문의 원문 주소 및 요약 확인
+
+
+
+## 흐름 A — 검색 → 저장
+
+1. 키워드 검색 → 정렬된 논문 목록 (10건씩 페이지)
+2. 요약 보기 → 한국어 요약이 실시간으로 스트리밍 됨
+3. (선택) 색인 고르기, 연결할 메모 체크
+4. Notion에 저장 → DB에 페이지 생성, 그래프에 노드·엣지 추가
+
+## 흐름 B — Notion 메모 → 추천 → 저장
+
+1. 메모 목록에서 하나 선택
+2. 메모 본문을 임베딩해 비슷한 논문 추천 (DB에 저장된 것 + 외부 검색)
+3. 원하는 논문 요약 보기 → 저장 (흐름 A와 동일)
+
+
+
 ## 스택
 
 | 역할 | 기술 |
@@ -49,66 +81,5 @@
 | 프론트엔드 | Next.js 14 |
 
 
-## API 엔드포인트
 
-### 논문 검색
-```
-GET /api/papers/search?q=attention+mechanism&perSource=50
-→ 소스별 최대 50건을 모아 재랭킹한 목록 (최대 300건)
-```
-
-### 요약 보기 (SSE 스트리밍)
-```
-POST /api/papers/{externalId}/summarize
-Body: { "title": "...", "abstract": "..." }
-→ text/event-stream, 토큰 단위 {"token": "..."}, 끝은 [DONE]
-```
-
-### 저장
-```
-POST /api/papers/{externalId}/save
-Body: {
-  "title": "...",
-  "summary": "이미 생성된 요약본",        ← Ollama 재호출 없음
-  "fullTextUrl": "...",
-  "source": "arxiv",
-  "externalId": "arxiv:1234.5678",
-  "tags": [],
-  "linkedNotionIds": ["메모 페이지 ID"],   ← 직접 연결
-  "indexNotionIds":  ["색인 페이지 ID"]    ← 색인
-}
-→ Notion DB에 페이지 생성 + 임베딩 저장 + 그래프 엣지 + 내용이 비슷한 논문·메모 재발견
-```
-
-### Notion 메모 목록
-```
-GET /api/papers/notion/pages     → 리소스 DB 안의 페이지 (메모 연결용)
-GET /api/papers/notion/index     → 색인 DB 항목 (색인 선택용)
-```
-
-### Notion 메모 → 논문 추천
-```
-POST /api/papers/notion/recommend
-Body: { "notionPageId": "...", "title": "메모 제목", "content": "" }
-→ content 를 비워 보내면 백엔드가 Notion 에서 본문을 읽어 임베딩합니다
-```
-
-### 그래프
-```
-GET /api/graph                    → 전체 노드·엣지 (논문 / 메모 / 색인)
-GET /api/graph/node/{nodeId}      → 특정 노드 중심 서브그래프
-```
-
-## 흐름 A — 검색 → 저장
-
-1. 키워드 검색 → 정렬된 논문 목록 (10건씩 페이지)
-2. 요약 보기 → 한국어 요약이 실시간으로 스트리밍
-3. (선택) 색인 고르기, 연결할 메모 체크
-4. Notion에 저장 → DB에 페이지 생성, 그래프에 노드·엣지 추가
-
-## 흐름 B — Notion 메모 → 추천 → 저장
-
-1. 메모 목록에서 하나 선택
-2. 메모 본문을 임베딩해 비슷한 논문 추천 (DB에 저장된 것 + 외부 검색)
-3. 원하는 논문 요약 보기 → 저장 (흐름 A와 동일)
 
