@@ -1,6 +1,7 @@
 package com.pkm.client;
 
 import com.pkm.model.Paper;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -19,9 +20,10 @@ import java.util.Set;
 
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class ResearchApiClient {
 
-    private final RestTemplate rest = new RestTemplate();
+    private final RestTemplate rest;
 
     // ── arXiv ─────────────────────────────────────────────
     public Mono<List<Paper>> searchArxiv(String query, int maxResults) {

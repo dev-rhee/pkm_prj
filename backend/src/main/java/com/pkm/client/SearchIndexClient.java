@@ -1,6 +1,7 @@
 package com.pkm.client;
 
 import com.pkm.model.Paper;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
@@ -39,10 +40,11 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class SearchIndexClient {
 
     private static final int MAX_FETCH = 50;
-    private final RestTemplate rest = new RestTemplate();
+    private final RestTemplate rest;
 
     // ── Semantic Scholar ──────────────────────────────────────
     public Mono<List<Paper>> searchSemanticScholar(String query, int maxResults) {
