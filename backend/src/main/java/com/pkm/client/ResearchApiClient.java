@@ -12,6 +12,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.net.URI;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -79,13 +80,20 @@ public class ResearchApiClient {
                 String summary = extractTag(entry, "summary").trim();
                 String pdfUrl  = "https://arxiv.org/pdf/" + id + ".pdf";
 
+                // <published>2022-09-29T17:57:08Z</published> — 앞 10자리만 날짜
+                LocalDate published = parseIsoDate(extractTag(entry, "published"));
+                String doi = extractTag(entry, "arxiv:doi").trim();
+
                 papers.add(Paper.builder()
                         .externalId("arxiv:" + id)
                         .source("arxiv")
                         .title(title)
                         .abstractText(summary)
+                        .authors(extractAllTags(entry, "name"))
                         .fullTextUrl(pdfUrl)
-                        .publishedAt(LocalDate.now())
+                        .publishedAt(published)
+                        .year(published != null ? published.getYear() : null)
+                        .doi(doi.isBlank() ? null : doi)
                         .build());
             } catch (Exception e) {
                 log.warn("arXiv 파싱 실패: {}", e.getMessage());
@@ -165,12 +173,32 @@ public class ResearchApiClient {
                     continue;
                 }
 
+                Integer year = toInteger(item.get("yearPublished"));
+                LocalDate published = parseIsoDate((String) item.get("publishedDate"));
+                if (published == null && year != null) published = LocalDate.of(year, 1, 1);
+                // CORE의 citationCount는 대부분 0이라 참고용. 0이면 비워 두어 카드에 "인용 0"이 안 뜨게 한다.
+                Integer citations = toInteger(item.get("citationCount"));
+                if (citations != null && citations == 0) citations = null;
+
+                List<String> authors = new ArrayList<>();
+                if (item.get("authors") instanceof List<?> authorList) {
+                    for (Object a : authorList) {
+                        if (a instanceof Map<?, ?> m && m.get("name") instanceof String name && !name.isBlank())
+                            authors.add(name);
+                    }
+                }
+
                 papers.add(Paper.builder()
                         .externalId("core:" + coreId)
                         .source("core")
                         .title(title)
                         .abstractText(abst)
+                        .authors(authors)
                         .fullTextUrl(pdfUrl)
+                        .publishedAt(published)
+                        .year(year)
+                        .citationCount(citations)
+                        .doi((String) item.get("doi"))
                         .build());
             } catch (Exception e) {
                 log.warn("CORE 파싱 실패: {}", e.getMessage());
@@ -252,12 +280,38 @@ public class ResearchApiClient {
                 if (item == null) continue;
                 String title   = (String) item.getOrDefault("title", "");
                 String fullUrl = "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC" + pmcId + "/";
+
+                // pubdate는 "2026 Sep 18" / "2023 Jan" / "2022"처럼 형식이 들쭉날쭉하다
+                LocalDate published = parsePmcDate((String) item.get("pubdate"));
+
+                List<String> authors = new ArrayList<>();
+                if (item.get("authors") instanceof List<?> authorList) {
+                    for (Object a : authorList) {
+                        if (a instanceof Map<?, ?> m && m.get("name") instanceof String name && !name.isBlank())
+                            authors.add(name);
+                    }
+                }
+
+                String doi = null;
+                if (item.get("articleids") instanceof List<?> articleIds) {
+                    for (Object o : articleIds) {
+                        if (o instanceof Map<?, ?> m && "doi".equals(m.get("idtype")) && m.get("value") instanceof String v) {
+                            doi = v;
+                            break;
+                        }
+                    }
+                }
+
                 papers.add(Paper.builder()
                         .externalId("pmc:" + pmcId)
                         .source("pmc")
                         .title(title)
                         .abstractText("")
+                        .authors(authors)
                         .fullTextUrl(fullUrl)
+                        .publishedAt(published)
+                        .year(published != null ? published.getYear() : null)
+                        .doi(doi)
                         .build());
             } catch (Exception e) {
                 log.warn("PMC 파싱 실패: {}", e.getMessage());
@@ -349,5 +403,51 @@ public class ResearchApiClient {
         int end   = xml.indexOf("</" + tag + ">");
         if (start == -1 || end == -1) return "";
         return xml.substring(start + tag.length() + 2, end);
+    }
+
+    /** 같은 태그가 여러 번 나올 때 전부 (arXiv 저자 <author><name>…) */
+    private List<String> extractAllTags(String xml, String tag) {
+        List<String> values = new ArrayList<>();
+        String open = "<" + tag + ">", close = "</" + tag + ">";
+        int from = 0;
+        while (true) {
+            int start = xml.indexOf(open, from);
+            if (start == -1) break;
+            int end = xml.indexOf(close, start);
+            if (end == -1) break;
+            String value = xml.substring(start + open.length(), end).trim();
+            if (!value.isBlank()) values.add(value);
+            from = end + close.length();
+        }
+        return values;
+    }
+
+    /** "2022-09-29T17:57:08Z", "2023-01-01T00:00:00+00:00" 같은 ISO 문자열의 날짜 부분 */
+    private LocalDate parseIsoDate(String raw) {
+        if (raw == null || raw.length() < 10) return null;
+        try {
+            return LocalDate.parse(raw.substring(0, 10));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static final DateTimeFormatter PMC_FULL  = DateTimeFormatter.ofPattern("yyyy MMM d", java.util.Locale.ENGLISH);
+    private static final DateTimeFormatter PMC_MONTH = DateTimeFormatter.ofPattern("yyyy MMM", java.util.Locale.ENGLISH);
+
+    /** PMC pubdate — "2026 Sep 18" → 그 날짜, "2023 Jan" → 1일, "2022" → 1월 1일 */
+    private LocalDate parsePmcDate(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String text = raw.trim();
+        try { return LocalDate.parse(text, PMC_FULL); } catch (Exception ignored) {}
+        try { return java.time.YearMonth.parse(text, PMC_MONTH).atDay(1); } catch (Exception ignored) {}
+        try {
+            if (text.length() >= 4) return LocalDate.of(Integer.parseInt(text.substring(0, 4)), 1, 1);
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private Integer toInteger(Object value) {
+        return value instanceof Number n ? n.intValue() : null;
     }
 }
