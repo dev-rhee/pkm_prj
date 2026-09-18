@@ -542,6 +542,15 @@ def _label(title) -> str:
     return text[:60] + ("…" if len(text) > 60 else "")
 
 
+def _paper_links(row) -> dict:
+    """논문 노드에서 이동할 곳 — 저장된 Notion 페이지가 우선, 없으면 원문 URL·DOI"""
+    return {
+        "notionPageId": row["notion_page_id"],
+        "fullTextUrl":  row["full_text_url"],
+        "doi":          row["doi"],
+    }
+
+
 @app.get("/graph")
 async def get_graph(limit: int = 50):
     """D3.js용 nodes + edges 반환"""
@@ -551,7 +560,12 @@ async def get_graph(limit: int = 50):
         paper_rows = await db.fetch(
             """
             SELECT p.id, p.title, p.source, p.external_id,
-                   COUNT(sp.id) > 0 AS is_saved
+                   p.full_text_url, p.doi,
+                   COUNT(sp.id) > 0 AS is_saved,
+                   -- 같은 논문을 여러 번 저장했을 수 있으니 가장 최근 Notion 페이지 하나만
+                   (SELECT notion_page_id FROM saved_papers
+                    WHERE paper_id = p.id AND notion_page_id IS NOT NULL
+                    ORDER BY created_at DESC LIMIT 1) AS notion_page_id
             FROM papers p
             LEFT JOIN saved_papers sp ON sp.paper_id = p.id
             GROUP BY p.id
@@ -610,6 +624,7 @@ async def get_graph(limit: int = 50):
                 "source":   r["source"],
                 "saved":    r["is_saved"],
                 "indexes":  paper_indexes.get(str(r["id"]), []),
+                **_paper_links(r),
             })
         seen = set()
         for r in index_rows:
@@ -674,12 +689,20 @@ async def get_node_graph(node_id: str):
         nodes = []
         for nid in neighbor_ids:
             paper = await db.fetchrow(
-                "SELECT id, title, source FROM papers WHERE id = $1", nid
+                """
+                SELECT p.id, p.title, p.source, p.full_text_url, p.doi,
+                       (SELECT notion_page_id FROM saved_papers
+                        WHERE paper_id = p.id AND notion_page_id IS NOT NULL
+                        ORDER BY created_at DESC LIMIT 1) AS notion_page_id
+                FROM papers p WHERE p.id = $1
+                """,
+                nid,
             )
             if paper:
                 nodes.append({
                     "id": str(paper["id"]), "label": _label(paper["title"]),
                     "type": "paper", "source": paper["source"],
+                    **_paper_links(paper),
                 })
                 continue
             notion = await db.fetchrow(

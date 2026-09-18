@@ -11,6 +11,9 @@ interface GraphNode extends d3.SimulationNodeDatum {
   saved?: boolean
   notionId?: string
   indexes?: string[]   // 논문이 속한 색인 이름들
+  notionPageId?: string | null   // 저장된 논문의 Notion 페이지
+  fullTextUrl?: string | null
+  doi?: string | null
 }
 
 interface GraphEdge extends d3.SimulationLinkDatum<GraphNode> {
@@ -53,6 +56,19 @@ const EDGE_LABEL: Record<EdgeType, string> = {
   saved:    '직접 연결',
   semantic: '내용 연결',
   index:    '색인',
+}
+
+// 논문 노드에서 갈 곳 — 저장해둔 Notion 페이지가 우선, 없으면 원문
+function paperLink(node: GraphNode): { url: string; label: string } | null {
+  if (node.notionPageId) {
+    return {
+      url:   `https://notion.so/${node.notionPageId.replace(/-/g, '')}`,
+      label: 'Notion에서 보기 →',
+    }
+  }
+  if (node.fullTextUrl) return { url: node.fullTextUrl, label: '원문 보기 →' }
+  if (node.doi)         return { url: `https://doi.org/${node.doi}`, label: '원문 보기 →' }
+  return null
 }
 
 export default function ThoughtGraph({ data, onNodeClick }: Props) {
@@ -315,16 +331,21 @@ export default function ThoughtGraph({ data, onNodeClick }: Props) {
           {tooltip.node.type === 'paper' && (tooltip.node.indexes?.length ?? 0) > 0 && (
             <div className="tt-index mono">색인: {tooltip.node.indexes!.join(', ')}</div>
           )}
-          {tooltip.node.type === 'paper' && (
-            <button
-              className="tt-btn"
-              onClick={() => {
-                setTooltip(null)
-              }}
-            >
-              논문 보기 →
-            </button>
-          )}
+          {tooltip.node.type === 'paper' && (() => {
+            const link = paperLink(tooltip.node)
+            if (!link) return null
+            return (
+              <button
+                className="tt-btn"
+                onClick={() => {
+                  window.open(link.url, '_blank', 'noopener,noreferrer')
+                  setTooltip(null)
+                }}
+              >
+                {link.label}
+              </button>
+            )
+          })()}
         </div>
       )}
 
