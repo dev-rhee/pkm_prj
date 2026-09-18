@@ -1,8 +1,8 @@
 package com.pkm.client;
 
 import com.pkm.model.Paper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.UriComponentsBuilder;
 import org.springframework.web.client.RestTemplate;
@@ -10,6 +10,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.net.URI;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -20,30 +21,48 @@ import java.util.Set;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ResearchApiClient {
 
     private final RestTemplate rest;
+    private final RestTemplate coreRest;   // CORE만 읽기 타임아웃이 길다 (WebConfig 참고)
+
+    public ResearchApiClient(RestTemplate rest,
+                             @Qualifier("coreRestTemplate") RestTemplate coreRest) {
+        this.rest = rest;
+        this.coreRest = coreRest;
+    }
 
     // ── arXiv ─────────────────────────────────────────────
+    // 모든 단어를 AND로 묶어 먼저 찾고, 검색어가 길어 0건이면 OR로 한 번 더 찾는다.
     public Mono<List<Paper>> searchArxiv(String query, int maxResults) {
         return Mono.fromCallable(() -> {
-            String url = UriComponentsBuilder
-                    .fromHttpUrl("https://export.arxiv.org/api/query")
-                    .queryParam("search_query", buildArxivQuery(query))
-                    .queryParam("start", 0)
-                    .queryParam("max_results", maxResults)
-                    .build()
-                    .encode()
-                    .toUriString();
-            String xml = rest.getForObject(url, String.class);
-            List<Paper> result = parseArxivXml(xml != null ? xml : "", query);
+            List<String> terms = searchTerms(query);
+            List<Paper> result = fetchArxiv(buildArxivQuery(query, terms, "AND"), maxResults, query);
+            if (result.isEmpty() && terms.size() > 1) {
+                result = fetchArxiv(buildArxivQuery(query, terms, "OR"), maxResults, query);
+                log.info("arXiv AND 0건 → OR 재시도: {}건", result.size());
+            }
             log.info("arXiv 결과: {}건", result.size());
             return result;
         }).subscribeOn(Schedulers.boundedElastic()).onErrorResume(e -> {
             log.warn("arXiv 오류: {}", e.getMessage());
             return Mono.just(new ArrayList<>());
         });
+    }
+
+    private List<Paper> fetchArxiv(String searchQuery, int maxResults, String originalQuery) {
+        // toUriString()으로 만든 String을 RestTemplate에 넘기면 한 번 더 인코딩돼
+        // 공백(%20)이 %2520으로 깨진다. URI 객체는 그대로 전송된다.
+        URI url = UriComponentsBuilder
+                .fromHttpUrl("https://export.arxiv.org/api/query")
+                .queryParam("search_query", searchQuery)
+                .queryParam("start", 0)
+                .queryParam("max_results", maxResults)
+                .build()
+                .encode()
+                .toUri();
+        String xml = rest.getForObject(url, String.class);
+        return parseArxivXml(xml != null ? xml : "", originalQuery);
     }
 
     private List<Paper> parseArxivXml(String xml, String query) {
@@ -76,33 +95,50 @@ public class ResearchApiClient {
     }
 
     // ── CORE ──────────────────────────────────────────────
+    // CORE는 Elasticsearch 문법이라 기본이 OR에 가깝다. "attention mechanism transformer"를
+    // 그대로 보내면 "transformer oil" 논문이 섞이므로 AND로 묶고, 0건이면 기본 검색으로 재시도한다.
     public Mono<List<Paper>> searchCore(String query, int maxResults) {
         return Mono.fromCallable(() -> {
             String apiKey = System.getenv().getOrDefault("CORE_API_KEY", "");
-            if (apiKey.isBlank()) return new ArrayList<Paper>();
+            if (apiKey.isBlank()) {
+                log.warn("CORE API 키 없음 — CORE 검색 생략");
+                return new ArrayList<Paper>();
+            }
 
-            String url = UriComponentsBuilder
-                    .fromHttpUrl("https://api.core.ac.uk/v3/search/works")
-                    .queryParam("q", buildCoreQuery(query))
-                    .queryParam("limit", maxResults)
-                    .queryParam("fullTextIdentifier", true)
-                    .build()
-                    .encode()
-                    .toUriString();
-
-            org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
-            headers.set("Authorization", "Bearer " + apiKey);
-            org.springframework.http.HttpEntity<Void> entity = new org.springframework.http.HttpEntity<>(headers);
-            org.springframework.http.ResponseEntity<Map> resp =
-                    rest.exchange(url, org.springframework.http.HttpMethod.GET, entity, Map.class);
-
-            List<Paper> result = parseCoreResponse(resp.getBody() != null ? resp.getBody() : Map.of());
+            List<String> terms = searchTerms(query);
+            List<Paper> result = fetchCore(buildCoreQuery(terms, query), maxResults, apiKey);
+            if (result.isEmpty() && terms.size() > 1) {
+                result = fetchCore(query, maxResults, apiKey);
+                log.info("CORE AND 0건 → 기본 검색 재시도: {}건", result.size());
+            }
             log.info("CORE 결과: {}건", result.size());
             return result;
         }).subscribeOn(Schedulers.boundedElastic()).onErrorResume(e -> {
             log.warn("CORE 오류: {}", e.getMessage());
             return Mono.just(new ArrayList<>());
         });
+    }
+
+    @SuppressWarnings("rawtypes")
+    private List<Paper> fetchCore(String q, int maxResults, String apiKey) {
+        URI url = UriComponentsBuilder
+                .fromHttpUrl("https://api.core.ac.uk/v3/search/works")
+                .queryParam("q", q)
+                .queryParam("limit", maxResults)
+                .queryParam("fullTextIdentifier", true)
+                // 논문 본문·참고문헌·출력물은 안 쓰는데 응답의 대부분을 차지한다 (50건 2.5MB → 0.16MB)
+                .queryParam("exclude", "fullText,references,outputs")
+                .build()
+                .encode()
+                .toUri();
+
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.set("Authorization", "Bearer " + apiKey);
+        org.springframework.http.HttpEntity<Void> entity = new org.springframework.http.HttpEntity<>(headers);
+        org.springframework.http.ResponseEntity<Map> resp =
+                coreRest.exchange(url, org.springframework.http.HttpMethod.GET, entity, Map.class);
+
+        return parseCoreResponse(resp.getBody() != null ? resp.getBody() : Map.of());
     }
 
     @SuppressWarnings("unchecked")
@@ -160,7 +196,7 @@ public class ResearchApiClient {
     // ── PMC ───────────────────────────────────────────────
     public Mono<List<Paper>> searchPmc(String query, int maxResults) {
         return Mono.fromCallable(() -> {
-            String searchUrl = UriComponentsBuilder
+            URI searchUrl = UriComponentsBuilder
                     .fromHttpUrl("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi")
                     .queryParam("db", "pmc")
                     .queryParam("term", buildPmcQuery(query))
@@ -168,27 +204,31 @@ public class ResearchApiClient {
                     .queryParam("retmode", "json")
                     .build()
                     .encode()
-                    .toUriString();
+                    .toUri();
 
             @SuppressWarnings("rawtypes")
             Map searchResp = rest.getForObject(searchUrl, Map.class);
-            if (searchResp == null) return new ArrayList<Paper>();
             @SuppressWarnings("unchecked")
-            Map<String, Object> esearch = (Map<String, Object>) searchResp.get("esearchresult");
-            if (esearch == null) return new ArrayList<Paper>();
+            Map<String, Object> esearch = searchResp != null
+                    ? (Map<String, Object>) searchResp.get("esearchresult") : null;
             @SuppressWarnings("unchecked")
-            List<String> ids = (List<String>) esearch.getOrDefault("idlist", List.of());
-            if (ids.isEmpty()) return new ArrayList<Paper>();
+            List<String> ids = esearch != null
+                    ? (List<String>) esearch.getOrDefault("idlist", List.of()) : List.of();
+            if (ids.isEmpty()) {
+                // 소스별 건수가 항상 로그에 남도록 조기 return에도 남긴다
+                log.info("PMC 결과: 0건");
+                return new ArrayList<Paper>();
+            }
 
             String idList = String.join(",", ids);
-            String summaryUrl = UriComponentsBuilder
+            URI summaryUrl = UriComponentsBuilder
                     .fromHttpUrl("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi")
                     .queryParam("db", "pmc")
                     .queryParam("id", idList)
                     .queryParam("retmode", "json")
                     .build()
                     .encode()
-                    .toUriString();
+                    .toUri();
 
             @SuppressWarnings("rawtypes")
             Map summaryResp = rest.getForObject(summaryUrl, Map.class);
@@ -249,10 +289,9 @@ public class ResearchApiClient {
         });
     }
 
-    private String buildArxivQuery(String query) {
-        List<String> terms = searchTerms(query);
+    private String buildArxivQuery(String query, List<String> terms, String operator) {
         if (terms.isEmpty()) return "all:" + query;
-        return String.join(" AND ", terms.stream().map(term -> "all:" + term).toList());
+        return String.join(" " + operator + " ", terms.stream().map(term -> "all:" + term).toList());
     }
 
     private String buildPmcQuery(String query) {
@@ -263,8 +302,9 @@ public class ResearchApiClient {
         return titleAbstractQuery + " AND open access[filter]";
     }
 
-    private String buildCoreQuery(String query) {
-        return query;
+    private String buildCoreQuery(List<String> terms, String query) {
+        if (terms.size() < 2) return query;
+        return String.join(" AND ", terms);
     }
 
     // 공백뿐 아니라 하이픈도 단어 구분자로 취급 — 번역된 검색어가

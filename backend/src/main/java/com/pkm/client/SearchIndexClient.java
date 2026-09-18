@@ -28,6 +28,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.net.URI;
 import java.time.LocalDate;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -51,12 +52,14 @@ public class SearchIndexClient {
         return Mono.fromCallable(() -> {
             int limit = Math.min(maxResults, MAX_FETCH);
 
-            String url = UriComponentsBuilder
+            // String으로 넘기면 RestTemplate이 한 번 더 인코딩해 공백이 %2520으로 깨진다.
+            // 다단어 검색어가 0건이 나던 원인. URI 객체는 그대로 전송된다.
+            URI url = UriComponentsBuilder
                     .fromHttpUrl("https://api.semanticscholar.org/graph/v1/paper/search")
                     .queryParam("query", query)
                     .queryParam("fields", "paperId,title,abstract,authors,year,citationCount,openAccessPdf,externalIds")
                     .queryParam("limit", limit)
-                    .build().encode().toUriString();
+                    .build().encode().toUri();
 
             HttpHeaders headers = new HttpHeaders();
             String apiKey = System.getenv().getOrDefault("SEMANTIC_SCHOLAR_API_KEY", "").trim();
@@ -132,13 +135,13 @@ public class SearchIndexClient {
         return Mono.fromCallable(() -> {
             int limit = Math.min(maxResults, MAX_FETCH);
 
-            String url = UriComponentsBuilder
+            URI url = UriComponentsBuilder
                     .fromHttpUrl("https://api.openalex.org/works")
                     .queryParam("search", query)
                     .queryParam("per-page", limit)
                     // is_oa:true 제거 — 의학/심리 논문처럼 OA가 아닌 논문도 검색되도록
                     .queryParam("select", "id,title,abstract_inverted_index,authorships,publication_year,cited_by_count,doi,open_access,primary_location")
-                    .build().encode().toUriString();
+                    .build().encode().toUri();
 
             Map resp = rest.getForObject(url, Map.class);
             List<Paper> result = parseOpenAlex(resp != null ? resp : Map.of());
