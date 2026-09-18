@@ -16,6 +16,7 @@ export interface Paper {
 export interface NotionPage {
   id: string
   title: string
+  indexIds?: string[]   // 메모가 속한 색인 페이지 ID들 (색인 페이지 자신은 빈 배열)
 }
 
 export interface SavePayload {

@@ -1,8 +1,32 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import PaperCard from '@/components/PaperCard'
 import { recommendFromNotion, type NotionPage, type Paper } from '@/lib/api'
+
+// Notion ID는 하이픈 유무가 섞여 들어오므로 비교할 땐 떼고 본다
+const norm = (id: string) => id.replace(/-/g, '')
+const NO_INDEX = '__none__'
+
+interface Folder {
+  id: string
+  title: string
+  memos: NotionPage[]
+}
+
+// 메모를 색인 폴더별로 묶는다. 색인이 없거나 목록에 없는 색인만 가진 메모는 '색인 없음'으로.
+function groupByIndex(notionPages: NotionPage[], indexPages: NotionPage[]): Folder[] {
+  const folders: Folder[] = indexPages.map(p => ({ id: p.id, title: p.title, memos: [] }))
+  const byId = new Map(folders.map(f => [norm(f.id), f]))
+  const none: Folder = { id: NO_INDEX, title: '색인 없음', memos: [] }
+
+  for (const memo of notionPages) {
+    const matched = (memo.indexIds ?? []).map(norm).map(id => byId.get(id)).filter(Boolean) as Folder[]
+    if (matched.length === 0) none.memos.push(memo)
+    matched.forEach(f => f.memos.push(memo))
+  }
+  return none.memos.length > 0 ? [...folders, none] : folders
+}
 
 interface Props {
   notionPages: NotionPage[]
@@ -15,6 +39,18 @@ export default function NotionPanel({ notionPages, indexPages, onSaved }: Props)
   const [papers, setPapers]         = useState<Paper[]>([])
   const [loading, setLoading]       = useState(false)
   const [searched, setSearched]     = useState(false)
+  const [openIds, setOpenIds]       = useState<Set<string>>(new Set())
+
+  const folders = useMemo(() => groupByIndex(notionPages, indexPages), [notionPages, indexPages])
+
+  function toggleFolder(id: string) {
+    setOpenIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   async function handleSelect(page: NotionPage) {
     setSelected(page)
@@ -43,18 +79,43 @@ export default function NotionPanel({ notionPages, indexPages, onSaved }: Props)
             메모 없음 — Notion integration 확인
           </p>
         ) : (
-          <ul className="memo-list">
-            {notionPages.map(page => (
-              <li key={page.id}>
-                <button
-                  className={`memo-btn ${selected?.id === page.id ? 'active' : ''}`}
-                  onClick={() => handleSelect(page)}
-                >
-                  <span className="memo-dot">◦</span>
-                  <span className="memo-title">{page.title}</span>
-                </button>
-              </li>
-            ))}
+          <ul className="folder-list">
+            {folders.map(folder => {
+              const open = openIds.has(folder.id)
+              return (
+                <li key={folder.id}>
+                  <button
+                    className={`folder-btn ${open ? 'open' : ''}`}
+                    onClick={() => toggleFolder(folder.id)}
+                    aria-expanded={open}
+                  >
+                    <span className="folder-chevron mono">{open ? '▾' : '▸'}</span>
+                    <span className="folder-title">{folder.title}</span>
+                    <span className="folder-count mono">{folder.memos.length}</span>
+                  </button>
+
+                  {open && (
+                    folder.memos.length === 0 ? (
+                      <p className="folder-empty muted">메모 없음</p>
+                    ) : (
+                      <ul className="memo-list">
+                        {folder.memos.map(page => (
+                          <li key={page.id}>
+                            <button
+                              className={`memo-btn ${selected?.id === page.id ? 'active' : ''}`}
+                              onClick={() => handleSelect(page)}
+                            >
+                              <span className="memo-dot">◦</span>
+                              <span className="memo-title">{page.title}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )
+                  )}
+                </li>
+              )
+            })}
           </ul>
         )}
       </aside>
@@ -123,11 +184,58 @@ export default function NotionPanel({ notionPages, indexPages, onSaved }: Props)
           text-transform: uppercase;
           margin-bottom: 14px;
         }
+        .folder-list {
+          list-style: none;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .folder-btn {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 7px 8px;
+          background: transparent;
+          border: 1px solid transparent;
+          border-radius: 7px;
+          color: var(--text);
+          font-family: var(--font-sans);
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          text-align: left;
+          transition: all 0.15s;
+        }
+        .folder-btn:hover { background: var(--bg3); border-color: var(--border); }
+        .folder-btn.open  { color: var(--accent); }
+        .folder-chevron {
+          width: 10px;
+          flex-shrink: 0;
+          font-size: 11px;
+          color: var(--muted);
+        }
+        .folder-title { flex: 1; word-break: break-all; }
+        .folder-count {
+          font-size: 10px;
+          color: var(--muted);
+          background: var(--bg3);
+          border-radius: 10px;
+          padding: 1px 7px;
+        }
+        .folder-empty {
+          font-size: 12px;
+          padding: 6px 0 8px 28px;
+        }
+
         .memo-list {
           list-style: none;
           display: flex;
           flex-direction: column;
           gap: 2px;
+          margin: 2px 0 8px 14px;
+          padding-left: 6px;
+          border-left: 1px solid var(--border);
         }
         .memo-btn {
           width: 100%;

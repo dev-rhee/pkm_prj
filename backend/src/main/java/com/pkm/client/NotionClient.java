@@ -263,7 +263,17 @@ public class NotionClient {
                 .map(this::extractTitle)
                 .orElse("(제목 없음)");
 
-        return Map.of("id", id, "title", title);
+        // 메모가 속한 색인. 프론트가 색인 폴더별로 메모를 묶는 데 쓴다. 색인 페이지 자신은 빈 목록.
+        List<String> indexIds = props.get(INDEX_PROPERTY) instanceof Map<?, ?> prop
+                && prop.get("relation") instanceof List<?> relation
+                ? relation.stream()
+                        .filter(Map.class::isInstance)
+                        .map(r -> (String) ((Map<?, ?>) r).get("id"))
+                        .filter(rid -> rid != null)
+                        .toList()
+                : List.of();
+
+        return Map.of("id", id, "title", title, "indexIds", indexIds);
     }
 
     @SuppressWarnings("unchecked")
